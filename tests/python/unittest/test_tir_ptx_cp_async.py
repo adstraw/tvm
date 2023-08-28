@@ -107,6 +107,49 @@ def test_ptx_cp_async_barrier():
 
 
 @T.prim_func
+def ptx_cp_async_bulk(A: T.Buffer((32, 128), "float16"), B: T.Buffer((32, 128), "float16")) -> None:
+    T.func_attr({"global_symbol": "default_function", "tir.noalias": True})
+    bx = T.env_thread("blockIdx.x")
+    tx = T.env_thread("threadIdx.x")
+    T.launch_thread(bx, 1)
+    T.launch_thread(tx, 32)
+    with T.block():
+        A_shared = T.alloc_buffer([32, 128], "float16", scope="shared")
+        barrier = T.alloc_buffer([1], "uint64", scope="shared")
+        T.reads(A[0:32, 0:128])
+        T.writes(B[0:32, 0:128])
+
+        barrier[0] = 0
+        T.evaluate(T.ptx_init_barrier_thread_count("barrier", 0, 32, dtype=""))
+        T.evaluate(T.ptx_init_barrier_byte_count("barrier", 0, 256, dtype=""))
+
+        T.evaluate(
+            T.ptx_cp_async_bulk(
+                A_shared.data, tx * 128, A.data, tx * 128, 256, "barrier", 0, dtype="float16"
+            )
+        )
+
+        T.evaluate(T.ptx_wait_barrier("barrier", 0, dtype=""))
+
+        for i in range(128):
+            B[tx, i] = A_shared[tx, i]
+
+
+@tvm.testing.requires_cuda_compute_version(8)
+def test_ptx_cp_async_bulk():
+    f = ptx_cp_async_bulk
+
+    mod = tvm.build(f, target="cuda")
+    A_np = np.random.rand(32, 128).astype("float16")
+    B_np = np.zeros((32, 128)).astype("float16")
+    dev = tvm.cuda(0)
+    A_nd = tvm.nd.array(A_np, device=dev)
+    B_nd = tvm.nd.array(B_np, device=dev)
+    mod(A_nd, B_nd)
+    tvm.testing.assert_allclose(B_nd.numpy(), A_np)
+
+
+@T.prim_func
 def ptx_cp_async_bulk_simple(A: T.Buffer((1, 128), "int8"), B: T.Buffer((1, 128), "int8")) -> None:
     T.func_attr({"global_symbol": "default_function", "tir.noalias": True})
     bx = T.env_thread("blockIdx.x")
@@ -197,5 +240,6 @@ def test_ptx_cp_async_bulk_multithread():
 if __name__ == "__main__":
     test_ptx_cp_async()
     test_ptx_cp_async_barrier()
+    test_ptx_cp_async_bulk()
     test_ptx_cp_async_bulk_simple()
     test_ptx_cp_async_bulk_multithread()
