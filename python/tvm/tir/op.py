@@ -1368,6 +1368,12 @@ def ptx_cp_async(dtype, shared_ptr, shared_offset, global_ptr, global_offset, by
     )
 
 
+def ptx_cp_async_bulk(dtype, shared_ptr, shared_offset, global_ptr, global_offset, bytes, barrier_arr, barrier_id):
+    return call_intrin(
+        dtype, "tir.ptx_cp_async_bulk", shared_ptr, shared_offset, global_ptr, global_offset, bytes, barrier_arr, barrier_id
+    )
+
+
 def ptx_commit_group():
     """TVM intrinsic for ptx async copy commit
     https://docs.nvidia.com/cuda/parallel-thread-execution/index.html#data-movement-and-conversion-instructions-cp-async-commit-group
@@ -1436,6 +1442,12 @@ def ptx_init_barrier_thread_count(barrier_arr, barrier_id, thread_count):
     """
     return call_intrin(
         "", "tir.ptx_init_barrier_thread_count", barrier_arr, barrier_id, thread_count
+    )
+
+
+def ptx_init_barrier_byte_count(barrier_arr, barrier_id, byte_count):
+    return call_intrin(
+        "", "tir.ptx_init_barrier_byte_count", barrier_arr, barrier_id, byte_count
     )
 
 

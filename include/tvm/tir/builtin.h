@@ -653,6 +653,8 @@ TVM_DLL const Op& ptx_ldmatrix();
  */
 TVM_DLL const Op& ptx_cp_async();
 
+TVM_DLL const Op& ptx_cp_async_bulk();
+
 /*!
  * \brief tvm intrinsics for ptx async copy commit and wait.
  *
@@ -678,6 +680,8 @@ TVM_DLL const Op& ptx_cp_async_barrier();
  *
  */
 TVM_DLL const Op& ptx_init_barrier_thread_count();
+
+TVM_DLL const Op& ptx_init_barrier_byte_count();
 
 /*!
  * \brief tvm intrinsics for ptx barrier arrival using mbarrier.arrive

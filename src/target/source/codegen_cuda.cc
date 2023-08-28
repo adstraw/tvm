@@ -174,7 +174,9 @@ std::string CodeGenCUDA::Finish() {
   decl_stream << "  #define uint64_t unsigned long long\n";
   decl_stream << "#endif\n";
 
-  return CodeGenC::Finish();
+  auto x = CodeGenC::Finish();
+  std::cout << x << std::endl;
+  return x;
 }
 
 void CodeGenCUDA::VisitStmt_(const tir::ForNode* op) {
@@ -610,9 +612,9 @@ void CodeGenCUDA::PrintStorageScope(const std::string& scope, std::ostream& os) 
   ICHECK_NE(scope, "global") << "Cannot allocate global memory when targeting CUDA. You must pass "
                                 "all global arrays as input instead";
   if (scope == "shared") {
-    os << "__shared__ ";
+    os << "__shared__ __align__(16) ";
   } else if (scope == "shared.dyn") {
-    os << "extern __shared__ ";
+    os << "extern __shared__ __align__(16) ";
   }
 }
 
@@ -953,14 +955,25 @@ void CodeGenCUDA::VisitExpr_(const CallNode* op, std::ostream& os) {
     std::string src = this->PrintExpr(op->args[2]);
     std::string src_offset = this->PrintExpr(op->args[3]);
     std::string size = this->PrintExpr(op->args[4]);
-    // use size of argument list to indicate whether or not to use predicated cp.async
     need_cast_smem_ptr_to_int_ = true;
+    // use size of argument list to indicate whether or not to use predicated cp.async
     if (op->args.size() == 5) {
       this->stream << PrintCpAsyncAssembly(dst, dst_offset, src, src_offset, size);
     } else {
       this->stream << PrintPredicatedCpAsyncAssembly(dst, dst_offset, src, src_offset, size,
                                                      this->PrintExpr(op->args[5]));
     }
+  } else if (op->op.same_as(builtin::ptx_cp_async_bulk())) {
+    std::string dst = this->PrintExpr(op->args[0]);
+    std::string dst_offset = this->PrintExpr(op->args[1]);
+    std::string src = this->PrintExpr(op->args[2]);
+    std::string src_offset = this->PrintExpr(op->args[3]);
+    std::string size = this->PrintExpr(op->args[4]);
+    std::string barriers_arr = Downcast<StringImm>(op->args[5])->value;
+    std::string barrier_id = this->PrintExpr(op->args[6]);
+    std::string barrier = barriers_arr + "[" + barrier_id + "]";
+    need_cast_smem_ptr_to_int_ = true;
+    this->stream << PrintCpAsyncBulkAsm(dst, dst_offset, src, src_offset, size, barrier);
   } else if (op->op.same_as(builtin::ptx_commit_group())) {
     this->stream << "__asm__ __volatile__(\"cp.async.commit_group;\");\n\n";
   } else if (op->op.same_as(builtin::ptx_wait_group())) {
@@ -979,6 +992,13 @@ void CodeGenCUDA::VisitExpr_(const CallNode* op, std::ostream& os) {
     std::string barrier = barriers_arr + "[" + barrier_id + "]";
     std::string thread_count = this->PrintExpr(op->args[2]);
     this->stream << PrintInitBarrierThreadCountAsm(barrier, thread_count);
+  } else if (op->op.same_as(builtin::ptx_init_barrier_byte_count())) {
+    need_cast_smem_ptr_to_int_ = true;
+    std::string barriers_arr = Downcast<StringImm>(op->args[0])->value;
+    std::string barrier_id = this->PrintExpr(op->args[1]);
+    std::string barrier = barriers_arr + "[" + barrier_id + "]";
+    std::string byte_count = this->PrintExpr(op->args[2]);
+    this->stream << PrintInitBarrierByteCountAsm(barrier, byte_count);
   } else if (op->op.same_as(builtin::ptx_arrive_barrier())) {
     need_cast_smem_ptr_to_int_ = true;
     std::string barriers_arr = Downcast<StringImm>(op->args[0])->value;

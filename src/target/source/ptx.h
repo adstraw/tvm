@@ -92,6 +92,13 @@ std::string PrintCpAsyncAssembly(const std::string& shared_ptr,
                                  const std::string& global_ptr,
                                  const std::string& global_elem_offset, const std::string& bytes);
 
+std::string PrintCpAsyncBulkAsm(const std::string& shared_ptr,
+                                const std::string& shared_elem_offset,
+                                const std::string& global_ptr,
+                                const std::string& global_elem_offset,
+                                const std::string& bytes,
+                                const std::string& barrier);
+
 /*!
  * \brief Print predicated ptx cp.async assembly string given parameters.
  * \param shared_ptr: The pointer to the destination shared memory.
@@ -121,6 +128,9 @@ std::string PrintCpAsyncBarrierAsm(const std::string& barrier);
  */
 std::string PrintInitBarrierThreadCountAsm(const std::string& barrier,
                                            const std::string& thread_count);
+
+std::string PrintInitBarrierByteCountAsm(const std::string& barrier,
+                                         const std::string& byte_count);
 
 /*!
  * \brief Print ptx barrier arrival using mbarrier.arrive
