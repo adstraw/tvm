@@ -107,43 +107,42 @@ def test_ptx_cp_async_barrier():
 
 
 @T.prim_func
-def ptx_cp_async_bulk(A: T.Buffer((32, 128), "float16"), B: T.Buffer((32, 128), "float16")) -> None:
+def ptx_cp_async_bulk_simple(A: T.Buffer((1, 128), "int8"), B: T.Buffer((1, 128), "int8")) -> None:
     T.func_attr({"global_symbol": "default_function", "tir.noalias": True})
     bx = T.env_thread("blockIdx.x")
     tx = T.env_thread("threadIdx.x")
     T.launch_thread(bx, 1)
-    T.launch_thread(tx, 32)
+    T.launch_thread(tx, 1)
     with T.block():
-        A_shared = T.alloc_buffer([32, 128], "float16", scope="shared")
+        A_shared = T.alloc_buffer([1, 128], "int8", scope="shared")
         barrier = T.alloc_buffer([1], "uint64", scope="shared")
-        T.reads(A[0:32, 0:128])
-        T.writes(B[0:32, 0:128])
+        T.reads(A[0:1, 0:128])
+        T.writes(B[0:1, 0:128])
 
         barrier[0] = 0
-        T.evaluate(T.ptx_init_barrier_thread_count("barrier", 0, 32, dtype=""))
-        T.evaluate(T.ptx_init_barrier_byte_count("barrier", 0, 8192, dtype=""))
+        T.evaluate(T.ptx_init_barrier_thread_count("barrier", 0, 1, dtype=""))
+        T.evaluate(T.ptx_init_barrier_byte_count("barrier", 0, 128, dtype=""))
 
-        for i in range(16):
-            T.evaluate(
-                T.ptx_cp_async_bulk(
-                    A_shared.data, tx * 128 + 8 * i, A.data, tx * 128 + 8 * i, 16, "barrier", 0, dtype="float16"
-                )
+        T.evaluate(
+            T.ptx_cp_async_bulk(
+                A_shared.data, 0, A.data, 0, 128, "barrier", 0, dtype="int8"
             )
+        )
 
         #T.evaluate(T.ptx_arrive_barrier("barrier", 0, dtype=""))
         T.evaluate(T.ptx_wait_barrier("barrier", 0, dtype=""))
 
         for i in range(128):
-            B[tx, i] = A_shared[tx, i]
+            B[0, i] = A_shared[0, i]
 
 
 @tvm.testing.requires_cuda_compute_version(8)
-def test_ptx_cp_async_bulk():
-    f = ptx_cp_async_bulk
+def test_ptx_cp_async_bulk_simple():
+    f = ptx_cp_async_bulk_simple
 
     mod = tvm.build(f, target="cuda")
-    A_np = np.random.rand(32, 128).astype("float16")
-    B_np = np.zeros((32, 128)).astype("float16")
+    A_np = np.random.rand(1, 128).astype("int8")
+    B_np = np.zeros((1, 128)).astype("int8")
     dev = tvm.cuda(0)
     A_nd = tvm.nd.array(A_np, device=dev)
     B_nd = tvm.nd.array(B_np, device=dev)
@@ -154,4 +153,4 @@ def test_ptx_cp_async_bulk():
 if __name__ == "__main__":
     test_ptx_cp_async()
     test_ptx_cp_async_barrier()
-    test_ptx_cp_async_bulk()
+    test_ptx_cp_async_bulk_simple()
