@@ -213,6 +213,7 @@ def ptx_global_to_shared_copy_fp32x1_barrier(
             B[tx, i] = A_shared[tx, i]
 
 
+# TODO: expand to multiple data types and vector sizes?
 @tvm.testing.requires_cuda
 def test_inject_async_copy_barrier():
     dtype = "float32"
@@ -227,6 +228,74 @@ def test_inject_async_copy_barrier():
     assert count_cp_async(mod["main"].body) == 1
 
     if tvm.testing.is_ampere_or_newer():
+        with tvm.transform.PassContext(config={"tir.use_async_copy": 1}):
+            mod = tvm.build(tvm.IRModule.from_expr(f), target="cuda")
+
+        A_np = np.random.rand(32, 128).astype(dtype)
+        B_np = np.zeros((32, 128)).astype(dtype)
+        dev = tvm.cuda(0)
+        A_nd = tvm.nd.array(A_np, device=dev)
+        B_nd = tvm.nd.array(B_np, device=dev)
+        mod(A_nd, B_nd)
+        tvm.testing.assert_allclose(B_nd.numpy(), A_np)
+
+
+def generate_global_to_shared_vectorized_bulk_copy(dtype, vector_size):
+    # TODO: assert size >= 16, multiple of 16
+
+    num_iters = 128 // vector_size
+    vector_size_expr = tvm.runtime.convert(vector_size)
+
+    @T.prim_func
+    def ptx_global_to_shared_copy(
+        A: T.Buffer((32, 128), dtype), B: T.Buffer((32, 128), dtype)
+    ) -> None:
+        T.func_attr({"global_symbol": "main", "tir.noalias": True})
+        bx = T.env_thread("blockIdx.x")
+        tx = T.env_thread("threadIdx.x")
+        T.launch_thread(bx, 1)
+        T.launch_thread(tx, 32)
+        with T.block():
+            A_shared = T.alloc_buffer([32, 128], dtype, scope="shared")
+            barrier = T.alloc_buffer([1], "uint64", scope="shared")
+            T.reads(A[0:32, 0:128])
+            T.writes(B[0:32, 0:128])
+
+            barrier[0] = 0
+            T.evaluate(T.ptx_init_barrier_thread_count("barrier", 0, 32, dtype=""))
+            T.evaluate(T.ptx_init_barrier_byte_count("barrier", 0, 32, dtype="")) #TODO: calculate size
+
+            T.attr("default", "async_scope", 1)
+            for i in T.serial(num_iters):
+                for j in T.vectorized(vector_size):
+                    A_shared[tx, i * vector_size_expr + j] = A[tx, i * vector_size_expr + j]
+
+            T.evaluate(T.ptx_wait_barrier("barrier", 0, dtype=""))
+
+            for i in range(128):
+                B[tx, i] = A_shared[tx, i]
+
+    return ptx_global_to_shared_copy
+
+
+@tvm.testing.requires_cuda
+def test_inject_async_bulk_copy():
+    for dtype, vec_size in [("float32", 8)]:
+        f = generate_global_to_shared_vectorized_bulk_copy(dtype, vec_size)
+
+        mod = tvm.IRModule.from_expr(f)
+        mod = tvm.tir.transform.LowerOpaqueBlock()(mod)
+        mod = tvm.tir.transform.FlattenBuffer()(mod)
+        if vec_size > 1:
+            mod = tvm.tir.transform.VectorizeLoop()(mod)
+        mod = tvm.tir.transform.InjectPTXAsyncCopy()(mod)
+
+        #assert count_cp_async(mod["main"].body) == 1
+
+        # TODO: hopper or newer
+        if not tvm.testing.is_ampere_or_newer():
+            continue
+
         with tvm.transform.PassContext(config={"tir.use_async_copy": 1}):
             mod = tvm.build(tvm.IRModule.from_expr(f), target="cuda")
 
